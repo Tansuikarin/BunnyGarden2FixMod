@@ -28,7 +28,7 @@ public static class DisableStockingPatch
 
     private static void Prefix(ref int __0)
     {
-        if (!Plugin.ConfigDisableStockings.Value) return;
+        if (!Plugin.isDisableStockingsActive) return;
         __0 = 0;
     }
 }
