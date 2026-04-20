@@ -39,7 +39,12 @@ public static class PurchasableItemCheatPatch
 
     private static void Postfix(PurchasableItem __instance, PurchasableParam purchasableParam)
     {
-        if (!Plugin.ConfigCheatEnabled.Value) return;
+        if (!Plugin.isCheatActive) 
+        {
+            var img = s_baseField?.GetValue(__instance) as UnityEngine.UI.Image;
+            if (img != null) img.color = Color.white;
+            return;
+        }
         try
         {
             if (GBSystem.Instance == null) return;
