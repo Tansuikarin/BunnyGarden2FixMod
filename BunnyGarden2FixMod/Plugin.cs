@@ -37,6 +37,10 @@ public class Plugin : BaseUnityPlugin
     public static ConfigEntry<bool> ConfigCheatEnabled;
     public static ConfigEntry<bool> ConfigDisableStockings;
 
+    // --- 实时控制变量 ---
+    public static bool isCheatActive = false;
+    public static bool isDisableStockingsActive = false;
+
     private GameObject freeCamObject;
     private Camera freeCam;
     private Camera originalCam;
@@ -100,59 +104,82 @@ public class Plugin : BaseUnityPlugin
             "Appearance",
             "DisableStockings",
             false,
-            "true にするとキャストのストッキングを非表示にします。\n" +
-            "ApplyStocking の type 引数を強制的に 0（なし）に置き換えます。");
+            "true にするとキャストのストッキングを非表示にします。");
 
         ConfigCheatEnabled = Config.Bind(
             "Cheat",
             "Enabled",
             false,
-            "true にすると会話選択肢・ドリンク・フードの正解をゲーム内に表示します。\n" +
-            "【会話選択肢】選択肢テキストの先頭に記号が追加されます。\n" +
-            "  ★ : 好感度UP（正解）\n" +
-            "  ▼ : 好感度DOWN（酔い選択肢だが現在の状況では効果なし）\n" +
-            "【ドリンク・フード】アイテムの背景色が変化します。\n" +
-            "  緑 : キャストのお気に入り（AddFavoriteLikability > 0）\n" +
-            "  黄 : 今日の旬アイテム（ボーナスあり）\n" +
-            "  赤 : キャストが嫌いなもの（AddFavoriteLikability < 0）");
+            "true にすると会話選択肢・ドリンク・フードの正解をゲーム内に表示します。");
+
+        // 初始化实时变量
+        isCheatActive = ConfigCheatEnabled.Value;
+        isDisableStockingsActive = ConfigDisableStockings.Value;
 
         Logger = base.Logger;
         PatchLogger.Initialize(Logger);
         var harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
         harmony.PatchAll();
-        // async ステートマシンは Harmony でパッチできないため LateUpdate 方式で補正
+        
         Patches.CameraZoomPatch.Initialize(gameObject);
+        
         PatchLogger.LogInfo($"プラグイン起動: {MyPluginInfo.PLUGIN_GUID} v{MyPluginInfo.PLUGIN_VERSION}");
-        PatchLogger.LogInfo($"解像度パッチを適用しました: {Plugin.ConfigWidth.Value}x{Plugin.ConfigHeight.Value}");
-        PatchLogger.LogInfo($"アンチエイリアシング設定: {Plugin.ConfigAntiAliasing.Value}");
     }
 
     private void OnGUI()
     {
+        // F5: 自由视角
         if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F5)
             ToggleFreeCam();
 
+        // F6: 固定视角
         if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F6)
             ToggleFixedFreeCam();
 
+        // F7: 实时开关作弊
+        if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F7)
+        {
+            isCheatActive = !isCheatActive;
+            PatchLogger.LogInfo($"正解表示チート: {(isCheatActive ? "ON" : "OFF")}");
+        }
+
+        // F8: 实时开关丝袜移除
+        if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F8)
+        {
+            isDisableStockingsActive = !isDisableStockingsActive;
+            PatchLogger.LogInfo($"ストッキング無効化: {(isDisableStockingsActive ? "ON" : "OFF")}");
+        }
+
+        // 界面状态绘制
         if (isFreeCamActive)
         {
             if (isFixedFreeCam)
             {
                 GUI.color = Color.yellow;
                 GUI.Label(new Rect(10, 40, 500, 30), "Fixed Free Camera Mode: ON (F6=TOGGLE)");
-                GUI.color = Color.white;
             }
             GUI.color = Color.green;
             GUI.Label(new Rect(10, 10, 500, 30), "Free Camera: ON (F5=OFF, Arrow/WASD=Move, E/Q=UpDown)");
-            GUI.color = Color.white;
         }
+
+        if (isCheatActive)
+        {
+            GUI.color = Color.cyan;
+            GUI.Label(new Rect(10, 70, 500, 30), "Cheat Display: ON (F7=TOGGLE)");
+        }
+
+        if (isDisableStockingsActive)
+        {
+            GUI.color = Color.magenta;
+            GUI.Label(new Rect(10, 100, 500, 30), "Disable Stockings: ON (F8=TOGGLE)");
+        }
+
+        GUI.color = Color.white;
     }
 
     private void ToggleFreeCam()
     {
         isFreeCamActive = !isFreeCamActive;
-
         if (isFreeCamActive)
             CreateFreeCam();
         else
@@ -160,7 +187,6 @@ public class Plugin : BaseUnityPlugin
             DestroyFreeCam();
             isFixedFreeCam = false;
         }
-
         PatchLogger.LogInfo($"フリーカメラ: {(isFreeCamActive ? "ON" : "OFF")}");
     }
 
@@ -175,36 +201,16 @@ public class Plugin : BaseUnityPlugin
 
     private void CreateFreeCam()
     {
-        // シーン内の全カメラを診断ログ出力
         var allCameras = Camera.allCameras;
-        PatchLogger.LogInfo($"[FreeCam診断] シーン内カメラ数: {allCameras.Length}");
-        foreach (var cam in allCameras)
-        {
-            var brain = cam.GetComponent("CinemachineBrain");
-            PatchLogger.LogInfo($"  - {cam.name} | tag={cam.tag} | depth={cam.depth} | enabled={cam.enabled} | CinemachineBrain={brain != null}");
-        }
-
         originalCam = Camera.main;
         if (originalCam == null)
         {
-            // tag に頼らず depth 最大のカメラを代替として使用
             foreach (var cam in allCameras)
             {
                 if (originalCam == null || cam.depth > originalCam.depth)
                     originalCam = cam;
             }
-
-            if (originalCam == null)
-            {
-                PatchLogger.LogError("[FreeCam診断] 有効なカメラが見つかりません。フリーカメラを起動できません");
-                isFreeCamActive = false;
-                return;
-            }
-            PatchLogger.LogInfo($"[FreeCam診断] 代替カメラを使用: {originalCam.name}");
-        }
-        else
-        {
-            PatchLogger.LogInfo($"[FreeCam診断] Camera.main = {originalCam.name}");
+            if (originalCam == null) return;
         }
 
         freeCamObject = new GameObject("BG2FreeCam");
@@ -214,7 +220,6 @@ public class Plugin : BaseUnityPlugin
             originalCam.transform.position,
             originalCam.transform.rotation);
 
-        // URP ポストプロセス設定をコピー（CinemachineBrain には触らない）
         CopyUrpCameraData(originalCam, freeCam);
 
         controller = freeCamObject.AddComponent<FreeCameraController>();
@@ -224,16 +229,13 @@ public class Plugin : BaseUnityPlugin
         var originalListener = originalCam.GetComponent<AudioListener>();
         if (originalListener != null)
             originalListener.enabled = false;
-
-        PatchLogger.LogInfo("フリーカメラを作成しました");
     }
 
     private static void CopyUrpCameraData(Camera src, Camera dst)
     {
         var srcData = src.GetUniversalAdditionalCameraData();
         var dstData = dst.GetUniversalAdditionalCameraData();
-        if (srcData == null || dstData == null)
-            return;
+        if (srcData == null || dstData == null) return;
 
         dstData.renderPostProcessing  = srcData.renderPostProcessing;
         dstData.antialiasing          = srcData.antialiasing;
@@ -258,7 +260,6 @@ public class Plugin : BaseUnityPlugin
         if (originalCam != null)
         {
             originalCam.enabled = true;
-
             var originalListener = originalCam.GetComponent<AudioListener>();
             if (originalListener != null)
                 originalListener.enabled = true;
